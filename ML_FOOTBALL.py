@@ -98,7 +98,7 @@ def quickSummary(data, peek, c = 'none'):
     print("shape: ", shapeOf, "\r\n", "glimpse: \r\n", headGlimpse, "\r\n", "desciption: \r\n", desc, "\r\n" ,"distinct groups: \r\n ", distinct)
     return shapeOf, headGlimpse, desc, distinct
 
-def convert_output_win(source):
+def convert_output_win(source):   # SWITCH CASE FOR DRAW/LOSS
     target = source.copy() # make a copy from source
     target['new'] = 2 # create a new column with any value
     for i, rows in target.iterrows():
@@ -136,19 +136,19 @@ tr_out = FT(training_output.values)
 te_out = FT(test_output.values)
 
 in_size = tr_in.size()[1]
-hidden_size= 30
+hidden_size= 150
 model = Net(in_size, hidden_size)
-eps = 1e-15
+eps = 1e-10
 criterion= nn.BCELoss() # binary cross entropy
-optimizer = torch.optim.Adam(model.parameters(), lr = 0.0001)
+optimizer = torch.optim.SGD(model.parameters(), lr=0.9, momentum = 0.6)
 model.eval()
 y_pred = model(te_in)
-before_train = criterion(y_pred.squeeze()+eps, te_out)
+before_train = criterion(y_pred.squeeze(), te_out)
 print('Test loss before training' , before_train.item())
 
 
 model.train()
-epochs = 100
+epochs = 3000
 errors = []
 for epoch in range(epochs):
     optimizer.zero_grad()
@@ -181,11 +181,16 @@ def plotcharts(errors):
     graf03.set_title('Tests')
     a = plt.plot(te_out.numpy(), 'yo', label='Real')
     plt.setp(a, markersize=10)
-    a = plt.plot(y_pred.detach().numpy(), 'b+', label='Predicted')
+    a = plt.plot(y_pred, 'b+', label='Predicted')
     plt.setp(a, markersize=10)
     plt.legend(loc=7)
     plt.show()
     
+    
+y_pred = y_pred.detach().numpy()    
+y_pred = np.where(y_pred <0.5, 0, y_pred)
+y_pred = np.where(y_pred >0.5, 1, y_pred)
+        
 plotcharts(errors)
 #split datasets into important features analytically
 # incorporate neural net and validation techniques
