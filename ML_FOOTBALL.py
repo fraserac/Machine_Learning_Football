@@ -43,10 +43,11 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
 import torch
 from torch import nn
 from torch import FloatTensor as FT
-
+from sklearn.preprocessing import PolynomialFeatures
 
 print("torch: ", torch.__version__)
  
@@ -58,8 +59,13 @@ data2 = read_csv(url2)
 data3 = read_csv(url3)
 extract = [5, 6, 7, 8, 9, 10, 13, 14, 16, 17, 18, 20, 21, 23, 24, 25, 26, 27, 29, 30, 31, 32, 33, 35, 36, 37, 38, 47, 48, 49]
 dataset1 = data1.iloc[:,extract]
-training = dataset1.iloc[:-20]
-test = dataset1.iloc[-20:]
+dataset2 = data2.iloc[:,extract]
+dataset3 = data3.iloc[:,extract]
+dataset3 = dataset3.fillna(0)
+fullData = [dataset1, dataset2, dataset3]
+fullDataCon = pd.concat(fullData)
+training = fullDataCon.iloc[:-20] # all rows except last twenty
+test = fullDataCon.iloc[-20:]
 
 
 #normalise columns 0-1:
@@ -79,14 +85,19 @@ for e in range(len(training.columns) - 3): #iterate for each column
         print("Error in normalization! Please check!")
 
 training = training.sample(frac=1)
+
 test = test.sample(frac=1)
 #all rows, all columns except for the last 3 columns
 training_input  = training.iloc[:, :-3]#all rows, the last 3 columns
 training_output = training.iloc[:, -3:]#all rows, all columns except for the last 3 columns
 test_input  = test.iloc[:, :-3]#all rows, the last 3 columns
 test_output = test.iloc[:, -3:]
+poly = PolynomialFeatures(3)
+M = poly.fit_transform(training_input)
+M2 = poly.fit_transform(test_input)
 
-        
+
+
 def quickSummary(data, peek, c = 'none'):
     shapeOf = data.shape
     headGlimpse = data.head(peek)
@@ -118,29 +129,55 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.fc1 = nn.Linear(self.input_size, self.hidden_size)
-        self.tanh= nn.Tanh()
+        self.fc1 = nn.GRU(self.input_size, self.hidden_size, num_layers = 10)
+        self.ReLU= nn.ReLU()
         self.fc2 = nn.Linear(self.hidden_size, 1)
         self.sigmoid = nn.Sigmoid()    
         
     def forward(self, x):
         hidden = self.fc1(x)
-        tanh = self.tanh(hidden)
-        output = self.fc2(tanh)
+        ReLU = self.ReLU(hidden)
+        output = self.fc2(ReLU)
         output = self.sigmoid(output)
         return output
 
-tr_in = FT(training_input.values)
-te_in = FT(test_input.values)
+class SkyNet(torch.nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(SkyNet, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size*5
+        self.fc1 = nn.LSTM(self.input_size, self.hidden_size, num_layers=3)
+        self.Softmax= nn.Softmax()
+        self.fc2 = nn.Linear(self.hidden_size, 1)
+        self.sigmoid = nn.Sigmoid()    
+        
+    def forward(self, x):
+        hidden = self.fc1(x)
+        Softmax = self.Softmax(hidden)
+        output = self.fc2(Softmax)
+        output = self.sigmoid(output)
+        return output
+    
+    
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
+
+tr_in = FT(M)
+te_in = FT(M2)
 tr_out = FT(training_output.values)
 te_out = FT(test_output.values)
 
 in_size = tr_in.size()[1]
-hidden_size= 150
+hidden_size= 250
 model = Net(in_size, hidden_size)
+model2 = SkyNet(in_size, hidden_size)
 eps = 1e-10
 criterion= nn.BCELoss() # binary cross entropy
-optimizer = torch.optim.SGD(model.parameters(), lr=0.9, momentum = 0.6)
+params= model.parameters()#list(model.parameters()) + list(model2.parameters())
+optimizer = torch.optim.SGD(params, lr=0.9999, momentum = 0.8)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 10)
+
 model.eval()
 y_pred = model(te_in)
 before_train = criterion(y_pred.squeeze(), te_out)
@@ -148,12 +185,13 @@ print('Test loss before training' , before_train.item())
 
 
 model.train()
-epochs = 3000
+epochs = 100
 errors = []
 for epoch in range(epochs):
     optimizer.zero_grad()
     # Forward pass
     y_pred = model(tr_in)
+    
     # Compute Loss
     loss = criterion(y_pred.squeeze(), tr_out)
     errors.append(loss.item())    
@@ -162,12 +200,14 @@ for epoch in range(epochs):
     # Backward pass
     loss.backward()
     optimizer.step()
+    if epoch % 5 ==0:
+       print("learning rate: ", get_lr(optimizer))
+    scheduler.step(loss)
     
 model.eval()
 y_pred = model(te_in)
 after_train = criterion(y_pred.squeeze(), te_out)
 print('Test loss after Training' , after_train.item())
-
 
 
 def plotcharts(errors):
@@ -192,6 +232,14 @@ y_pred = np.where(y_pred <0.5, 0, y_pred)
 y_pred = np.where(y_pred >0.5, 1, y_pred)
         
 plotcharts(errors)
+
+
+def func(params, xdata, ydata):
+    return (ydata - np.dot(xdata, params))
+
+
+
+
 #split datasets into important features analytically
 # incorporate neural net and validation techniques
 #aggregate data a la paper file:///C:/Users/Fraser/Downloads/1-s2.0-S0957417417302890-main.pdf
